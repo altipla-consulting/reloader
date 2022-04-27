@@ -36,7 +36,7 @@ reloader test -v ./pkg/foo -r TestGet
 
 ## Binaries
 
-Run binaries and restart it everytime the current folder changes:
+Run a binary and restart it everytime the current folder changes:
 ```shell
 reloader run ./cmd/myapp
 ```
