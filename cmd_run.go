@@ -25,10 +25,10 @@ var (
 
 func init() {
 	CmdRoot.AddCommand(CmdRun)
-	CmdRun.PersistentFlags().StringSliceVarP(&flagWatch, "watch", "w", nil, "Folders to watch recursively for changes")
-	CmdRun.PersistentFlags().StringSliceVarP(&flagIgnore, "ignore", "g", nil, "Folders to ignore")
-	CmdRun.PersistentFlags().BoolVarP(&flagRestart, "restart", "r", false, "Automatic restart in case of failure")
-	CmdRun.PersistentFlags().StringSliceVarP(&flagRestartExts, "restart-exts", "e", nil, "List of extensions that cause the app to restart")
+	CmdRun.PersistentFlags().StringSliceVarP(&flagWatch, "watch", "w", nil, "Folders to watch recursively for changes.")
+	CmdRun.PersistentFlags().StringSliceVarP(&flagIgnore, "ignore", "g", nil, "Folders to ignore.")
+	CmdRun.PersistentFlags().BoolVarP(&flagRestart, "restart", "r", false, "Automatic restart in case of failure.")
+	CmdRun.PersistentFlags().StringSliceVarP(&flagRestartExts, "restart-exts", "e", nil, "List of extensions that cause the app to restart.")
 }
 
 type empty struct{}

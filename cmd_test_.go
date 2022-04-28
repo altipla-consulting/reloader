@@ -19,9 +19,9 @@ var (
 
 func init() {
 	CmdRoot.AddCommand(CmdTest)
-	CmdTest.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose run of the go tests")
+	CmdTest.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose run of the go tests.")
 	CmdTest.PersistentFlags().StringVarP(&flagRun, "run", "r", "", "Run only those tests and examples matching the regular expression.")
-	CmdTest.PersistentFlags().StringVarP(&flagTags, "tags", "t", "", "Tags for the go build command")
+	CmdTest.PersistentFlags().StringVarP(&flagTags, "tags", "t", "", "Tags for the go build command.")
 }
 
 var CmdTest = &cobra.Command{
