@@ -26,7 +26,7 @@ func init() {
 
 var CmdTest = &cobra.Command{
 	Use:   "test",
-	Short: "Run a go test command everytime the package changes.",
+	Short: "Run Go tests everytime the package changes.",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(command *cobra.Command, args []string) error {
 		changes := make(chan string)
