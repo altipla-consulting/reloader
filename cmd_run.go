@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -288,7 +289,7 @@ func appManager(ctx context.Context, actions *actionsController, args []string) 
 					}
 					name = filepath.Base(wd)
 				}
-				cmd = exec.CommandContext(ctx, name, args[1:]...)
+				cmd = exec.CommandContext(ctx, filepath.Join(build.Default.GOPATH, "bin", name), args[1:]...)
 				cmd.Stdin = os.Stdin
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
