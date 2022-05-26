@@ -298,7 +298,9 @@ func appManager(ctx context.Context, actions *actionsController, args []string) 
 				go watchProcess(monitor, cmd)()
 
 			case appErr := <-monitor:
-				log.WithField("error", appErr.Error()).Debug("Error received from monitor")
+				if appErr != nil {
+					log.WithField("error", appErr.Error()).Debug("Error received from monitor")
+				}
 				actions.runerr <- errors.Trace(appErr)
 			}
 		}
