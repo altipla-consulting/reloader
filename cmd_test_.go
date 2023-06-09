@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -20,22 +20,18 @@ var cmdTest = &cobra.Command{
 }
 
 func init() {
-	var (
-		flagVerbose       bool
-		flagRun, flagTags string
-	)
+	var flagVerbose bool
+	var flagRun, flagTags string
+	var flagCount int64
 	cmdTest.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose run of the go tests.")
 	cmdTest.PersistentFlags().StringVarP(&flagRun, "run", "r", "", "Run only those tests and examples matching the regular expression.")
 	cmdTest.PersistentFlags().StringVarP(&flagTags, "tags", "t", "", "Tags for the go build command.")
-	cmdTest.RunE = func(command *cobra.Command, args []string) error {
+	cmdTest.PersistentFlags().Int64VarP(&flagCount, "count", "c", 0, "Run tests multiple times. If count is 0 it will run one time. If count is 1 it will run one time but without caching the result (standard go test behavior).")
+	cmdTest.RunE = func(cmd *cobra.Command, args []string) error {
 		changes := make(chan string)
 		reload := make(chan bool, 1)
 
-		// First reload of the app after a change
-		reload <- true
-
-		ctx, cancel := context.WithCancel(context.Background())
-		g, ctx := errgroup.WithContext(ctx)
+		g, ctx := errgroup.WithContext(cmd.Context())
 
 		g.Go(func() error {
 			return errors.Trace(watch.Recursive(ctx, changes, args...))
@@ -48,7 +44,7 @@ func init() {
 					return nil
 
 				case change := <-changes:
-					log.WithField("path", change).Debug("file change detected")
+					log.WithField("path", change).Debug("File change detected")
 
 					select {
 					case reload <- true:
@@ -59,6 +55,9 @@ func init() {
 		})
 
 		g.Go(func() error {
+			// First test run.
+			reload <- true
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -77,12 +76,19 @@ func init() {
 					if flagTags != "" {
 						runCmd = append(runCmd, "-tags", flagTags)
 					}
+					if flagCount > 0 {
+						runCmd = append(runCmd, "-count", fmt.Sprint(flagCount))
+					}
 					runCmd = append(runCmd, args...)
 					cmd := exec.CommandContext(ctx, "go", runCmd...)
 					cmd.Stdin = os.Stdin
 					cmd.Stdout = os.Stdout
 					cmd.Stderr = os.Stderr
 					if err := cmd.Run(); err != nil {
+						if ctx.Err() != nil {
+							return nil
+						}
+
 						if _, ok := err.(*exec.ExitError); ok {
 							log.Error(">>> command failed!")
 							continue
@@ -96,11 +102,11 @@ func init() {
 			}
 		})
 
-		g.Go(func() error {
-			watch.Interrupt(ctx, cancel)
-			return nil
-		})
+		if err := g.Wait(); err != nil {
+			log.Println("wait err", err)
+			return errors.Trace(err)
+		}
 
-		return errors.Trace(g.Wait())
+		return nil
 	}
 }

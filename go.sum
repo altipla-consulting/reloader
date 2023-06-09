@@ -1,6 +1,8 @@
 github.com/BurntSushi/toml v1.2.1 h1:9F2/+DoOYIOksmaJFPw1tGFy1eDnIJXg+UHjuD8lTak=
 github.com/altipla-consulting/cmdbase v0.2.5 h1:yHonYdYNdXZC9S9Bjr6RMul98zuO3DoHjEUztbWGiD0=
 github.com/altipla-consulting/cmdbase v0.2.5/go.mod h1:vkqYYfRpLpksH6ddKjpnjW7XjSOAmVlTe0Ktiq1o0iw=
+github.com/altipla-consulting/cmdbase v0.2.6 h1:cLuiixJFCz6qsier/19YGPokY5SFw3dRyxzX7I42XOg=
+github.com/altipla-consulting/cmdbase v0.2.6/go.mod h1:vkqYYfRpLpksH6ddKjpnjW7XjSOAmVlTe0Ktiq1o0iw=
 github.com/altipla-consulting/errors v1.2.5 h1:/xIiJq8FX1BFJNqvATutMqIcN5o6/RiReTexQm84BwM=
 github.com/altipla-consulting/errors v1.2.5/go.mod h1:wqLbQEvpmFHArZcU8AvRKZuzeF3LL2gw+dhk3+ztikQ=
 github.com/cpuguy83/go-md2man/v2 v2.0.2/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=

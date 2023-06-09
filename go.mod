@@ -3,7 +3,7 @@ module github.com/altipla-consulting/reloader
 go 1.20
 
 require (
-	github.com/altipla-consulting/cmdbase v0.2.5
+	github.com/altipla-consulting/cmdbase v0.2.6
 	github.com/altipla-consulting/errors v1.2.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.7.0
