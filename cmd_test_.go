@@ -5,30 +5,29 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/altipla-consulting/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
-	"libs.altipla.consulting/errors"
 	"libs.altipla.consulting/watch"
 )
 
-var (
-	flagVerbose       bool
-	flagRun, flagTags string
-)
-
-func init() {
-	CmdRoot.AddCommand(CmdTest)
-	CmdTest.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose run of the go tests.")
-	CmdTest.PersistentFlags().StringVarP(&flagRun, "run", "r", "", "Run only those tests and examples matching the regular expression.")
-	CmdTest.PersistentFlags().StringVarP(&flagTags, "tags", "t", "", "Tags for the go build command.")
+var cmdTest = &cobra.Command{
+	Use:     "test",
+	Example: "reloader test ./my/package",
+	Short:   "Run Go tests everytime the package changes.",
+	Args:    cobra.MinimumNArgs(1),
 }
 
-var CmdTest = &cobra.Command{
-	Use:   "test",
-	Short: "Run Go tests everytime the package changes.",
-	Args:  cobra.MinimumNArgs(1),
-	RunE: func(command *cobra.Command, args []string) error {
+func init() {
+	var (
+		flagVerbose       bool
+		flagRun, flagTags string
+	)
+	cmdTest.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose run of the go tests.")
+	cmdTest.PersistentFlags().StringVarP(&flagRun, "run", "r", "", "Run only those tests and examples matching the regular expression.")
+	cmdTest.PersistentFlags().StringVarP(&flagTags, "tags", "t", "", "Tags for the go build command.")
+	cmdTest.RunE = func(command *cobra.Command, args []string) error {
 		changes := make(chan string)
 		reload := make(chan bool, 1)
 
@@ -103,5 +102,5 @@ var CmdTest = &cobra.Command{
 		})
 
 		return errors.Trace(g.Wait())
-	},
+	}
 }

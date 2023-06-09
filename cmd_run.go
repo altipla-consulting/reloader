@@ -9,28 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/altipla-consulting/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 	"libs.altipla.consulting/collections"
-	"libs.altipla.consulting/errors"
 	"libs.altipla.consulting/watch"
 )
-
-var (
-	flagWatch       []string
-	flagIgnore      []string
-	flagRestart     bool
-	flagRestartExts []string
-)
-
-func init() {
-	CmdRoot.AddCommand(CmdRun)
-	CmdRun.PersistentFlags().StringSliceVarP(&flagWatch, "watch", "w", nil, "Folders to watch recursively for changes.")
-	CmdRun.PersistentFlags().StringSliceVarP(&flagIgnore, "ignore", "g", nil, "Folders to ignore.")
-	CmdRun.PersistentFlags().BoolVarP(&flagRestart, "restart", "r", false, "Automatic restart in case of failure.")
-	CmdRun.PersistentFlags().StringSliceVarP(&flagRestartExts, "restart-exts", "e", nil, "List of extensions that cause the app to restart.")
-}
 
 type empty struct{}
 
@@ -41,11 +26,25 @@ type actionsController struct {
 	runerr  chan error
 }
 
-var CmdRun = &cobra.Command{
-	Use:   "run",
-	Short: "Run a command everytime the package changes.",
-	Args:  cobra.MinimumNArgs(1),
-	RunE: func(command *cobra.Command, args []string) error {
+var cmdRun = &cobra.Command{
+	Use:     "run",
+	Example: "reloader run -r ./backend",
+	Short:   "Run a command everytime the package changes.",
+	Args:    cobra.MinimumNArgs(1),
+}
+
+func init() {
+	var (
+		flagWatch       []string
+		flagIgnore      []string
+		flagRestart     bool
+		flagRestartExts []string
+	)
+	cmdRun.PersistentFlags().StringSliceVarP(&flagWatch, "watch", "w", nil, "Folders to watch recursively for changes.")
+	cmdRun.PersistentFlags().StringSliceVarP(&flagIgnore, "ignore", "g", nil, "Folders to ignore.")
+	cmdRun.PersistentFlags().BoolVarP(&flagRestart, "restart", "r", false, "Automatic restart in case of failure.")
+	cmdRun.PersistentFlags().StringSliceVarP(&flagRestartExts, "restart-exts", "e", nil, "List of extensions that cause the app to restart.")
+	cmdRun.RunE = func(command *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		g, ctx := errgroup.WithContext(ctx)
 
@@ -60,14 +59,14 @@ var CmdRun = &cobra.Command{
 
 		// Watch the folders for changes.
 		for _, folder := range flagWatch {
-			g.Go(watchFolder(ctx, actions, folder))
+			g.Go(watchFolder(ctx, actions, flagIgnore, folder))
 		}
-		g.Go(watchFolder(ctx, actions, args[0]))
-		g.Go(receiveWatchChanges(ctx, actions))
+		g.Go(watchFolder(ctx, actions, flagIgnore, args[0]))
+		g.Go(receiveWatchChanges(ctx, actions, flagRestartExts))
 
 		// Managers of the rebuild and rerun process.
 		g.Go(buildsManager(ctx, actions, args[0]))
-		g.Go(restartsManager(ctx, actions))
+		g.Go(restartsManager(ctx, actions, flagRestart))
 		g.Go(appManager(ctx, actions, args))
 
 		// Watch for close interrupts to exit.
@@ -77,10 +76,10 @@ var CmdRun = &cobra.Command{
 		})
 
 		return errors.Trace(g.Wait())
-	},
+	}
 }
 
-func watchFolder(ctx context.Context, actions *actionsController, folder string) func() error {
+func watchFolder(ctx context.Context, actions *actionsController, ignoreFolders []string, folder string) func() error {
 	return func() error {
 		var paths []string
 		walkFn := func(path string, info os.FileInfo, err error) error {
@@ -95,7 +94,7 @@ func watchFolder(ctx context.Context, actions *actionsController, folder string)
 			}
 
 			var ignore bool
-			for _, ig := range flagIgnore {
+			for _, ig := range ignoreFolders {
 				if strings.HasPrefix(path, ig) {
 					ignore = true
 					break
@@ -118,7 +117,7 @@ func watchFolder(ctx context.Context, actions *actionsController, folder string)
 	}
 }
 
-func receiveWatchChanges(ctx context.Context, actions *actionsController) func() error {
+func receiveWatchChanges(ctx context.Context, actions *actionsController, restartExts []string) func() error {
 	return func() error {
 		// Batch changes with a short timer to avoid concurrency issues with atomic saving.
 		var buildPending bool
@@ -138,7 +137,7 @@ func receiveWatchChanges(ctx context.Context, actions *actionsController) func()
 				if filepath.Ext(change) == ".go" {
 					log.WithField("path", change).Debug("File change detected, rebuild")
 					buildPending = true
-				} else if collections.HasString(flagRestartExts, filepath.Ext(change)) {
+				} else if collections.HasString(restartExts, filepath.Ext(change)) {
 					log.WithField("path", change).Debug("File change detected, restart")
 				} else {
 					log.WithField("path", change).Debug("File change detected, but no action performed")
@@ -222,7 +221,7 @@ func buildsManager(ctx context.Context, actions *actionsController, app string) 
 	}
 }
 
-func restartsManager(ctx context.Context, actions *actionsController) func() error {
+func restartsManager(ctx context.Context, actions *actionsController, restart bool) func() error {
 	return func() error {
 		secs := 1 * time.Second
 
@@ -232,7 +231,7 @@ func restartsManager(ctx context.Context, actions *actionsController) func() err
 				return nil
 
 			case appErr := <-actions.runerr:
-				if flagRestart {
+				if restart {
 					if appErr != nil {
 						log.WithField("error", appErr.Error()).Errorf(">>> command failed, restarting in %s", secs)
 					} else {
