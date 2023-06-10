@@ -12,19 +12,17 @@ import (
 	"github.com/altipla-consulting/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
-	"libs.altipla.consulting/collections"
 	"libs.altipla.consulting/watch"
 )
 
-type empty struct{}
-
-type actionsController struct {
-	changes chan string
-	rebuild chan empty
-	restart chan empty
-	runerr  chan error
+var defaultIgnoreFolders = []string{
+	"node_modules",
+	".git",
 }
+
+type empty struct{}
 
 var cmdRun = &cobra.Command{
 	Use:     "run",
@@ -34,52 +32,34 @@ var cmdRun = &cobra.Command{
 }
 
 func init() {
-	var (
-		flagWatch       []string
-		flagIgnore      []string
-		flagRestart     bool
-		flagRestartExts []string
-	)
+	var flagWatch, flagIgnore []string
+	var flagRestartExts []string
+	var flagRestart bool
 	cmdRun.PersistentFlags().StringSliceVarP(&flagWatch, "watch", "w", nil, "Folders to watch recursively for changes.")
 	cmdRun.PersistentFlags().StringSliceVarP(&flagIgnore, "ignore", "g", nil, "Folders to ignore.")
 	cmdRun.PersistentFlags().BoolVarP(&flagRestart, "restart", "r", false, "Automatic restart in case of failure.")
 	cmdRun.PersistentFlags().StringSliceVarP(&flagRestartExts, "restart-exts", "e", nil, "List of extensions that cause the app to restart.")
-	cmdRun.RunE = func(command *cobra.Command, args []string) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		g, ctx := errgroup.WithContext(ctx)
 
-		actions := &actionsController{
-			changes: make(chan string),
+	cmdRun.RunE = func(cmd *cobra.Command, args []string) error {
+		grp, ctx := errgroup.WithContext(cmd.Context())
 
-			// Multiple messages have the same effect that a single one, so buffer the channels.
-			rebuild: make(chan empty, 1),
-			restart: make(chan empty, 1),
-			runerr:  make(chan error),
-		}
-
-		// Watch the folders for changes.
+		changes := make(chan string)
 		for _, folder := range flagWatch {
-			g.Go(watchFolder(ctx, actions, flagIgnore, folder))
+			grp.Go(watchFolder(ctx, changes, flagIgnore, folder))
 		}
-		g.Go(watchFolder(ctx, actions, flagIgnore, args[0]))
-		g.Go(receiveWatchChanges(ctx, actions, flagRestartExts))
+		grp.Go(watchFolder(ctx, changes, flagIgnore, args[0]))
 
-		// Managers of the rebuild and rerun process.
-		g.Go(buildsManager(ctx, actions, args[0]))
-		g.Go(restartsManager(ctx, actions, flagRestart))
-		g.Go(appManager(ctx, actions, args))
+		rebuild := make(chan empty)
+		restart := make(chan empty, 1)
+		grp.Go(receiveWatchChanges(ctx, changes, flagRestartExts, rebuild, restart))
 
-		// Watch for close interrupts to exit.
-		g.Go(func() error {
-			watch.Interrupt(ctx, cancel)
-			return nil
-		})
+		grp.Go(appManager(ctx, args, flagRestart, rebuild, restart))
 
-		return errors.Trace(g.Wait())
+		return errors.Trace(grp.Wait())
 	}
 }
 
-func watchFolder(ctx context.Context, actions *actionsController, ignoreFolders []string, folder string) func() error {
+func watchFolder(ctx context.Context, changes chan string, ignore []string, folder string) func() error {
 	return func() error {
 		var paths []string
 		walkFn := func(path string, info os.FileInfo, err error) error {
@@ -93,15 +73,14 @@ func watchFolder(ctx context.Context, actions *actionsController, ignoreFolders 
 				return nil
 			}
 
-			var ignore bool
-			for _, ig := range ignoreFolders {
-				if strings.HasPrefix(path, ig) {
-					ignore = true
-					break
-				}
-			}
-			if ignore || path == "node_modules" || path == ".git" {
+			// Ignore default and custom folders.
+			if slices.Contains(defaultIgnoreFolders, filepath.Base(path)) {
 				return filepath.SkipDir
+			}
+			for _, ig := range ignore {
+				if strings.HasPrefix(path, ig) {
+					return filepath.SkipDir
+				}
 			}
 
 			paths = append(paths, path)
@@ -113,13 +92,14 @@ func watchFolder(ctx context.Context, actions *actionsController, ignoreFolders 
 		}
 
 		log.WithField("path", folder).Debug("Watching changes")
-		return errors.Trace(watch.Files(ctx, actions.changes, paths...))
+		return errors.Trace(watch.Files(ctx, changes, paths...))
 	}
 }
 
-func receiveWatchChanges(ctx context.Context, actions *actionsController, restartExts []string) func() error {
+func receiveWatchChanges(ctx context.Context, changes chan string, restartExts []string, rebuild, restart chan empty) func() error {
 	return func() error {
 		// Batch changes with a short timer to avoid concurrency issues with atomic saving.
+		// Also depending on the changed file we need a build or only to restart the app.
 		var buildPending bool
 		var waitNextChange *time.Timer
 
@@ -133,11 +113,11 @@ func receiveWatchChanges(ctx context.Context, actions *actionsController, restar
 			case <-ctx.Done():
 				return nil
 
-			case change := <-actions.changes:
+			case change := <-changes:
 				if filepath.Ext(change) == ".go" {
 					log.WithField("path", change).Debug("File change detected, rebuild")
 					buildPending = true
-				} else if collections.HasString(restartExts, filepath.Ext(change)) {
+				} else if slices.Contains(restartExts, filepath.Ext(change)) {
 					log.WithField("path", change).Debug("File change detected, restart")
 				} else {
 					log.WithField("path", change).Debug("File change detected, but no action performed")
@@ -158,13 +138,13 @@ func receiveWatchChanges(ctx context.Context, actions *actionsController, restar
 
 				if buildPending {
 					select {
-					case actions.rebuild <- empty{}:
+					case rebuild <- empty{}:
 					default:
 					}
 					buildPending = false
 				} else {
 					select {
-					case actions.restart <- empty{}:
+					case restart <- empty{}:
 					default:
 					}
 				}
@@ -173,56 +153,41 @@ func receiveWatchChanges(ctx context.Context, actions *actionsController, restar
 	}
 }
 
-func buildApp(ctx context.Context, app string) error {
+var errBuildFailed = errors.New("reloader: build failed")
+
+func buildApp(ctx context.Context, app string, restart chan empty) error {
+	log.Info(">>> build...")
+
 	cmd := exec.CommandContext(ctx, "go", "install", app)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if _, ok := err.(*exec.ExitError); ok {
-			log.Error(">>> command failed!")
-			return nil
+			log.Error(">>> build command failed!")
+			return errors.Trace(errBuildFailed)
 		}
 
 		return errors.Trace(err)
 	}
 
+	select {
+	case restart <- empty{}:
+	default:
+	}
+
 	return nil
 }
 
-func buildsManager(ctx context.Context, actions *actionsController, app string) func() error {
+func appManager(ctx context.Context, args []string, shouldRestart bool, rebuild, restart chan empty) func() error {
 	return func() error {
 		// Build the application for the first time when starting up.
-		if err := buildApp(ctx, app); err != nil {
+		if err := buildApp(ctx, args[0], restart); err != nil && !errors.Is(err, errBuildFailed) {
 			return errors.Trace(err)
 		}
-		select {
-		case actions.restart <- empty{}:
-		default:
-		}
 
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-
-			case <-actions.rebuild:
-				log.Info(">>> build...")
-
-				if err := buildApp(ctx, app); err != nil {
-					return errors.Trace(err)
-				}
-				select {
-				case actions.restart <- empty{}:
-				default:
-				}
-			}
-		}
-	}
-}
-
-func restartsManager(ctx context.Context, actions *actionsController, restart bool) func() error {
-	return func() error {
+		var cmd *exec.Cmd
+		runerr := make(chan error, 1)
 		secs := 1 * time.Second
 
 		for {
@@ -230,8 +195,44 @@ func restartsManager(ctx context.Context, actions *actionsController, restart bo
 			case <-ctx.Done():
 				return nil
 
-			case appErr := <-actions.runerr:
-				if restart {
+			case <-rebuild:
+				if err := stopProcess(ctx, cmd, runerr); err != nil {
+					return errors.Trace(err)
+				}
+				cmd = nil
+
+				if err := buildApp(ctx, args[0], restart); err != nil {
+					if errors.Is(err, errBuildFailed) {
+						continue
+					}
+
+					return errors.Trace(err)
+				}
+
+				// Reset the restart timer after a successful build.
+				secs = 1 * time.Second
+
+				select {
+				case restart <- empty{}:
+				default:
+				}
+
+			case <-restart:
+				if err := stopProcess(ctx, cmd, runerr); err != nil {
+					return errors.Trace(err)
+				}
+
+				log.Info(">>> run...")
+				var err error
+				cmd, err = startProcess(ctx, runerr, args)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+			case appErr := <-runerr:
+				cmd = nil
+
+				if shouldRestart {
 					if appErr != nil {
 						log.WithField("error", appErr.Error()).Errorf(">>> command failed, restarting in %s", secs)
 					} else {
@@ -250,7 +251,7 @@ func restartsManager(ctx context.Context, actions *actionsController, restart bo
 					}
 
 					// Run application again.
-					actions.restart <- empty{}
+					restart <- empty{}
 				} else {
 					if appErr != nil {
 						log.WithField("error", appErr.Error()).Errorf(">>> command failed")
@@ -261,53 +262,79 @@ func restartsManager(ctx context.Context, actions *actionsController, restart bo
 	}
 }
 
-func appManager(ctx context.Context, actions *actionsController, args []string) func() error {
-	return func() error {
-		var cmd *exec.Cmd
-		var monitor chan error
-
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-
-			case <-actions.restart:
-				if cmd != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Exited()) {
-					if err := cmd.Process.Signal(os.Interrupt); err != nil {
-						return errors.Trace(err)
-					}
-				}
-				monitor = nil
-
-				log.Info(">>> run...")
-				name := filepath.Base(args[0])
-				if args[0] == "." {
-					wd, err := os.Getwd()
-					if err != nil {
-						return errors.Trace(err)
-					}
-					name = filepath.Base(wd)
-				}
-				cmd = exec.CommandContext(ctx, filepath.Join(build.Default.GOPATH, "bin", name), args[1:]...)
-				cmd.Stdin = os.Stdin
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-
-				monitor = make(chan error, 1)
-				go watchProcess(monitor, cmd)()
-
-			case appErr := <-monitor:
-				if appErr != nil {
-					log.WithField("error", appErr.Error()).Debug("Error received from monitor")
-				}
-				actions.runerr <- errors.Trace(appErr)
-			}
+func startProcess(ctx context.Context, runerr chan error, args []string) (*exec.Cmd, error) {
+	name := filepath.Base(args[0])
+	if args[0] == "." {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		name = filepath.Base(wd)
 	}
+	cmd := exec.CommandContext(ctx, filepath.Join(build.Default.GOPATH, "bin", name), args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	go func() {
+		runerr <- errors.Trace(cmd.Wait())
+	}()
+
+	return cmd, nil
 }
 
-func watchProcess(monitor chan error, cmd *exec.Cmd) func() {
-	return func() {
-		monitor <- errors.Trace(cmd.Run())
+func stopProcess(ctx context.Context, cmd *exec.Cmd, runerr chan error) error {
+	if cmd == nil {
+		return nil
 	}
+
+	logger := log.WithField("pid", cmd.Process.Pid)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	grp, ctx := errgroup.WithContext(ctx)
+
+	grp.Go(func() error {
+		logger.Trace("Send interrupt signal")
+		return errors.Trace(cmd.Process.Signal(os.Interrupt))
+	})
+
+	grp.Go(func() error {
+		appErr := <-runerr
+		logger.WithField("error", appErr).Trace("Process close detected")
+		cancel()
+		return nil
+	})
+
+	grp.Go(func() error {
+		select {
+		case <-ctx.Done():
+		case <-time.After(3 * time.Second):
+			log.Info(">>> close process...")
+		}
+		return nil
+	})
+
+	grp.Go(func() error {
+		select {
+		case <-ctx.Done():
+			logger.Trace("Process closed before the timeout")
+			return nil
+		case <-time.After(15 * time.Second):
+			logger.Warning("Kill process after timeout")
+			return errors.Trace(cmd.Process.Kill())
+		}
+	})
+
+	if err := grp.Wait(); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	return nil
 }

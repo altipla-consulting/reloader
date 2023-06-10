@@ -27,6 +27,7 @@ func init() {
 	cmdTest.PersistentFlags().StringVarP(&flagRun, "run", "r", "", "Run only those tests and examples matching the regular expression.")
 	cmdTest.PersistentFlags().StringVarP(&flagTags, "tags", "t", "", "Tags for the go build command.")
 	cmdTest.PersistentFlags().Int64VarP(&flagCount, "count", "c", 0, "Run tests multiple times. If count is 0 it will run one time. If count is 1 it will run one time but without caching the result (standard go test behavior).")
+
 	cmdTest.RunE = func(cmd *cobra.Command, args []string) error {
 		changes := make(chan string)
 		reload := make(chan bool, 1)
