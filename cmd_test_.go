@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/altipla-consulting/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"libs.altipla.consulting/watch"
 )
@@ -45,7 +47,18 @@ func init() {
 					return nil
 
 				case change := <-changes:
-					log.WithField("path", change).Debug("File change detected")
+					log.WithField("path", change).Info("File change detected")
+
+					// Ignore default folders.
+					ignore := func(s string) bool {
+						if strings.HasPrefix(change, s) {
+							return true
+						}
+						return false
+					}
+					if slices.ContainsFunc(defaultIgnoreFolders, ignore) {
+						continue
+					}
 
 					select {
 					case reload <- true:
