@@ -42,7 +42,7 @@ func init() {
 					return nil
 
 				case change := <-changes:
-					log.WithField("path", change).Info("File change detected")
+					log.WithField("path", change).Debug("File change detected")
 
 					select {
 					case reload <- true:
