@@ -20,6 +20,7 @@ import (
 var defaultIgnoreFolders = []string{
 	"node_modules",
 	".git",
+	"tmp",
 }
 
 type empty struct{}

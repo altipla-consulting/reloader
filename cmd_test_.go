@@ -9,7 +9,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
-	"libs.altipla.consulting/watch"
 )
 
 var cmdTest = &cobra.Command{
@@ -34,9 +33,7 @@ func init() {
 
 		g, ctx := errgroup.WithContext(cmd.Context())
 
-		g.Go(func() error {
-			return errors.Trace(watch.Recursive(ctx, changes, args...))
-		})
+		g.Go(watchFolder(ctx, changes, []string{}, args[0]))
 
 		g.Go(func() error {
 			for {
