@@ -4,14 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/altipla-consulting/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
-	"libs.altipla.consulting/watch"
 )
 
 var cmdTest = &cobra.Command{
@@ -36,9 +33,7 @@ func init() {
 
 		g, ctx := errgroup.WithContext(cmd.Context())
 
-		g.Go(func() error {
-			return errors.Trace(watch.Recursive(ctx, changes, args...))
-		})
+		g.Go(watchFolder(ctx, changes, []string{}, args[0]))
 
 		g.Go(func() error {
 			for {
@@ -48,17 +43,6 @@ func init() {
 
 				case change := <-changes:
 					log.WithField("path", change).Info("File change detected")
-
-					// Ignore default folders.
-					ignore := func(s string) bool {
-						if strings.HasPrefix(change, s) {
-							return true
-						}
-						return false
-					}
-					if slices.ContainsFunc(defaultIgnoreFolders, ignore) {
-						continue
-					}
 
 					select {
 					case reload <- true:
