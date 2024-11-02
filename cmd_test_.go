@@ -33,7 +33,9 @@ func init() {
 
 		g, ctx := errgroup.WithContext(cmd.Context())
 
-		g.Go(watchFolder(ctx, changes, []string{}, args[0]))
+		for _, path := range args {
+			g.Go(watchFolder(ctx, changes, []string{}, path))
+		}
 
 		g.Go(func() error {
 			for {
